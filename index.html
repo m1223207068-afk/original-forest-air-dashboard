@@ -531,7 +531,7 @@
       position: relative;
       min-height: 0;
       display: grid;
-      grid-template-columns: minmax(390px, 1fr) minmax(240px, 0.62fr);
+      grid-template-columns: minmax(360px, 1fr) minmax(300px, 0.72fr);
       align-items: stretch;
       gap: 0;
       padding: 14px 24px 18px;
@@ -784,7 +784,7 @@
 
     .anion-value {
       margin-top: 10px;
-      font-size: clamp(68px, var(--anion-size, 6.8vw), 116px);
+      font-size: clamp(54px, var(--anion-size, 5.6vw), 104px);
       line-height: 0.82;
       font-weight: 880;
       color: #ecfff6;
@@ -797,8 +797,6 @@
       overflow: hidden;
       text-overflow: clip;
       transform-origin: left center;
-      --anion-scale: 1;
-      transform: scaleX(var(--anion-scale));
     }
 
     .anion-unit {
@@ -1055,7 +1053,7 @@
       .ion-stage::before { inset: 52px 16px 16px; }
       .ion-gauge { min-height: 300px; }
       .orb { min-width: 210px; width: 58%; }
-      .anion-value { font-size: clamp(58px, 18vw, 86px); }
+      .anion-value { font-size: clamp(46px, var(--anion-size, 16vw), 78px); }
       .anion-unit { font-size: 15px; }
       .ion-meta-row { grid-template-columns: 78px 1fr; }
       .metric-grid { grid-template-columns: 1fr; }
@@ -1216,21 +1214,25 @@
 
     function fitAnionValue() {
       const node = el('anionValue');
-      node.style.setProperty('--anion-scale', '1');
       node.style.removeProperty('--anion-size');
       if (!node.textContent || node.textContent === '--') return;
       const digits = node.textContent.trim().length;
+      const isMobile = window.matchMedia('(max-width: 620px)').matches;
       if (digits >= 7) {
-        node.style.setProperty('--anion-size', '4.7vw');
+        node.style.setProperty('--anion-size', isMobile ? '42px' : '60px');
       } else if (digits >= 6) {
-        node.style.setProperty('--anion-size', '5.35vw');
+        node.style.setProperty('--anion-size', isMobile ? '48px' : '70px');
       } else if (digits >= 5) {
-        node.style.setProperty('--anion-size', '6vw');
+        node.style.setProperty('--anion-size', isMobile ? '58px' : '84px');
       }
-      const available = node.clientWidth;
-      const needed = node.scrollWidth;
-      if (available > 0 && needed > available) {
-        node.style.setProperty('--anion-scale', Math.max(0.58, available / needed).toFixed(3));
+
+      const minSize = isMobile ? 34 : 46;
+      let guard = 0;
+      while (node.scrollWidth > node.clientWidth && guard < 16) {
+        const current = parseFloat(getComputedStyle(node).fontSize);
+        if (!Number.isFinite(current) || current <= minSize) break;
+        node.style.setProperty('--anion-size', `${Math.max(minSize, current - 4)}px`);
+        guard += 1;
       }
     }
 
