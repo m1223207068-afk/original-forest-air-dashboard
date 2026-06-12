@@ -10,6 +10,8 @@ services:
         sync: false
       - key: WST_PASS
         sync: false
+      - key: ADMIN_TOKEN
+        sync: false
       - key: WEATHER_PROVIDER
         value: open_meteo
       - key: WEATHER_LATITUDE

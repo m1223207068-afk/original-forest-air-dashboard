@@ -35,6 +35,7 @@ http://127.0.0.1:8787
 
 - `WST_USER`: 沃斯彤账号
 - `WST_PASS`: 沃斯彤密码
+- `ADMIN_TOKEN`: 页面底部切换沃斯彤账号密码时使用的管理口令。云端部署必须设置；为空时只允许本机访问接口
 - `WEATHER_PROVIDER`: 天气源，默认 `open_meteo`，无需 Key；也可设为 `amap`
 - `WEATHER_LATITUDE`: Open-Meteo 纬度，默认 `30.42`
 - `WEATHER_LONGITUDE`: Open-Meteo 经度，默认 `120.30`
@@ -59,6 +60,7 @@ Open-Meteo 接口地址为 `https://api.open-meteo.com/v1/forecast`，无须注�
 ```text
 WST_USER=你的沃斯彤账号
 WST_PASS=你的沃斯彤密码
+ADMIN_TOKEN=请设置一个管理口令
 WEATHER_PROVIDER=open_meteo
 WEATHER_LATITUDE=30.42
 WEATHER_LONGITUDE=120.30
@@ -91,6 +93,7 @@ CloudBase 云托管关键配置:
 ```text
 WST_USER=你的沃斯彤账号
 WST_PASS=你的沃斯彤密码
+ADMIN_TOKEN=请设置一个管理口令
 WEATHER_PROVIDER=open_meteo
 WEATHER_LATITUDE=30.42
 WEATHER_LONGITUDE=120.30

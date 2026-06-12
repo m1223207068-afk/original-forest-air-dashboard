@@ -37,6 +37,7 @@ HOST = os.getenv("DASHBOARD_HOST", "0.0.0.0" if os.getenv("PORT") else "127.0.0.
 PORT = int(os.getenv("DASHBOARD_PORT") or os.getenv("PORT") or "8787")
 WST_USER = os.getenv("WST_USER", "")
 WST_PASS = os.getenv("WST_PASS", "")
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
 AMAP_KEY = os.getenv("AMAP_KEY", "")
 AMAP_CITY = os.getenv("AMAP_CITY", "330113")
 WEATHER_PROVIDER = os.getenv("WEATHER_PROVIDER", "open_meteo")
@@ -59,6 +60,71 @@ latest = {
     "error": None,
 }
 subscribers = set()
+credentials_lock = threading.Lock()
+credentials_changed = threading.Event()
+upstream_ws = None
+upstream_generation = 0
+
+
+def mask_account(value):
+    if not value:
+        return ""
+    if len(value) <= 2:
+        return "*" * len(value)
+    if len(value) <= 5:
+        return f"{value[0]}***{value[-1]}"
+    return f"{value[:2]}***{value[-2:]}"
+
+
+def current_credentials():
+    with credentials_lock:
+        return WST_USER, WST_PASS, upstream_generation
+
+
+def set_credentials(user, password):
+    global WST_USER, WST_PASS, upstream_generation, upstream_ws
+    user = str(user or "").strip()
+    password = str(password or "").strip()
+    if not user or not password:
+        return False, "账号和密码不能为空"
+
+    with credentials_lock:
+        WST_USER = user
+        WST_PASS = password
+        upstream_generation += 1
+        ws = upstream_ws
+    if ws:
+        try:
+            ws.close()
+        except Exception:
+            pass
+    credentials_changed.set()
+    update_state(
+        connected=False,
+        status="credentials_updated",
+        message="沃斯彤账号已更新，正在重新连接",
+        updatedAt=datetime.now().isoformat(timespec="seconds"),
+        device=None,
+        data=None,
+        config={"wstUser": mask_account(user)},
+        error=None,
+    )
+    return True, "账号已更新，正在重新连接"
+
+
+def is_local_request(client_address):
+    host = client_address[0] if client_address else ""
+    return host in {"127.0.0.1", "::1", "localhost"}
+
+
+def authorized(headers, client_address):
+    if ADMIN_TOKEN:
+        auth = headers.get("Authorization", "")
+        token = headers.get("X-Admin-Token", "")
+        if auth.startswith("Bearer "):
+            token = auth.replace("Bearer ", "", 1).strip()
+        return token == ADMIN_TOKEN
+    return is_local_request(client_address)
 
 
 def publish(payload):
@@ -133,18 +199,42 @@ def handle_upstream_message(message):
 
 
 def upstream_loop():
-    if not WST_USER or not WST_PASS:
-        update_state(status="missing_credentials", message="请设置 WST_USER 和 WST_PASS", error="missing credentials")
-        return
-
-    url = f"ws://register.woston.cn:8888/User/{WST_USER}/{WST_PASS}"
+    global upstream_ws
     while True:
+        user, password, generation = current_credentials()
+        if not user or not password:
+            update_state(
+                connected=False,
+                status="missing_credentials",
+                message="请在页面底部设置沃斯彤账号和密码",
+                config={"wstUser": ""},
+                error="missing credentials",
+            )
+            credentials_changed.wait(timeout=5)
+            credentials_changed.clear()
+            continue
+
+        url = f"ws://register.woston.cn:8888/User/{user}/{password}"
         update_state(connected=False, status="connecting", message="正在连接检测仪云端", error=None)
         try:
             ws = websocket.create_connection(url, timeout=20)
-            update_state(connected=True, status="connected", message="已连接，等待实时数据", error=None)
+            with credentials_lock:
+                if generation != upstream_generation:
+                    ws.close()
+                    continue
+                upstream_ws = ws
+            update_state(
+                connected=True,
+                status="connected",
+                message="已连接，等待实时数据",
+                config={"wstUser": mask_account(user)},
+                error=None,
+            )
             ws.settimeout(70)
             while True:
+                _, _, current_generation = current_credentials()
+                if current_generation != generation:
+                    break
                 try:
                     handle_upstream_message(ws.recv())
                 except websocket.WebSocketTimeoutException:
@@ -155,8 +245,14 @@ def upstream_loop():
                         updatedAt=datetime.now().isoformat(timespec="seconds"),
                     )
         except Exception as exc:
-            update_state(connected=False, status="reconnecting", message="连接断开，5 秒后重连", error=str(exc))
+            _, _, current_generation = current_credentials()
+            if current_generation == generation:
+                update_state(connected=False, status="reconnecting", message="连接断开，5 秒后重连", error=str(exc))
             time.sleep(5)
+        finally:
+            with credentials_lock:
+                if upstream_ws is locals().get("ws"):
+                    upstream_ws = None
 
 
 WEATHER_CODE_TEXT = {
@@ -397,6 +493,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 
+    def _send_json(self, payload, status=200):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self._send_headers(status, "application/json; charset=utf-8")
+        self.wfile.write(body)
+
+    def _read_json(self):
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length <= 0 or length > 4096:
+            return None
+        raw = self.rfile.read(length).decode("utf-8", "replace")
+        return json.loads(raw)
+
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/":
@@ -421,6 +529,15 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.dumps(latest, ensure_ascii=False).encode("utf-8")
             self._send_headers(200, "application/json; charset=utf-8")
             self.wfile.write(body)
+            return
+
+        if path == "/config":
+            user, _, _ = current_credentials()
+            self._send_json({
+                "wstUser": mask_account(user),
+                "requiresAdminToken": bool(ADMIN_TOKEN),
+                "localOnly": not bool(ADMIN_TOKEN),
+            })
             return
 
         if path == "/weather":
@@ -457,6 +574,32 @@ class Handler(BaseHTTPRequestHandler):
 
         self._send_headers(404, "text/plain; charset=utf-8")
         self.wfile.write(b"not found")
+
+    def do_POST(self):
+        path = urlparse(self.path).path
+        if path != "/config/wst":
+            self._send_json({"ok": False, "message": "not found"}, 404)
+            return
+
+        if not authorized(self.headers, self.client_address):
+            self._send_json({
+                "ok": False,
+                "message": "未授权。云端请先设置 ADMIN_TOKEN 环境变量，并在页面输入管理口令。",
+            }, 401)
+            return
+
+        try:
+            payload = self._read_json()
+        except Exception:
+            self._send_json({"ok": False, "message": "请求格式错误"}, 400)
+            return
+
+        ok, message = set_credentials(
+            (payload or {}).get("user"),
+            (payload or {}).get("password"),
+        )
+        status = 200 if ok else 400
+        self._send_json({"ok": ok, "message": message}, status)
 
 
 def main():

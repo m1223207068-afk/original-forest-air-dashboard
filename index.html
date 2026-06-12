@@ -990,6 +990,93 @@
       word-break: break-all;
     }
 
+    .login-config {
+      margin-top: 18px;
+      padding: 18px;
+      display: grid;
+      grid-template-columns: minmax(260px, 0.8fr) minmax(560px, 1.2fr);
+      gap: 18px;
+      align-items: center;
+    }
+
+    .config-copy {
+      position: relative;
+      z-index: 1;
+    }
+
+    .config-copy strong {
+      display: block;
+      color: var(--brand-3);
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+
+    .config-copy span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    .config-form {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+      gap: 10px;
+      align-items: end;
+    }
+
+    .config-field {
+      display: grid;
+      gap: 7px;
+      min-width: 0;
+    }
+
+    .config-field label {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .config-field input {
+      width: 100%;
+      height: 42px;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px;
+      outline: none;
+      background: rgba(255,255,255,0.055);
+      color: var(--ink);
+      padding: 0 12px;
+      font: 14px "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+    }
+
+    .config-field input:focus {
+      border-color: rgba(84,255,225,0.45);
+      box-shadow: 0 0 0 3px rgba(84,255,225,0.09);
+    }
+
+    .config-button {
+      height: 42px;
+      border: 1px solid rgba(84,255,225,0.34);
+      border-radius: 12px;
+      background: linear-gradient(135deg, rgba(39,240,139,0.22), rgba(84,255,225,0.12));
+      color: #ecfff6;
+      padding: 0 18px;
+      font-weight: 760;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .config-button:active {
+      transform: translateY(1px);
+    }
+
+    .config-status {
+      grid-column: 1 / -1;
+      min-height: 18px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
     @keyframes particleFloat {
       to { background-position: 92px 74px, -128px 110px; }
     }
@@ -1043,6 +1130,15 @@
       .metric-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
+      .login-config {
+        grid-template-columns: 1fr;
+      }
+      .config-form {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .config-button {
+        grid-column: 1 / -1;
+      }
       .brand-title strong { white-space: normal; }
     }
 
@@ -1057,6 +1153,7 @@
       .anion-unit { font-size: 15px; }
       .ion-meta-row { grid-template-columns: 78px 1fr; }
       .metric-grid { grid-template-columns: 1fr; }
+      .config-form { grid-template-columns: 1fr; }
       .metric .num { font-size: 24px; }
       .weather-temp { font-size: 44px; }
       .quote { font-size: 21px; }
@@ -1171,12 +1268,36 @@
         </div>
       </section>
     </section>
+
+    <section class="card login-config">
+      <div class="config-copy">
+        <strong>设备登录配置</strong>
+        <span>当前账号：<b id="currentWstUser">--</b>。提交后后端会断开旧连接，并用新的沃斯彤账号重新拉取实时数据。</span>
+      </div>
+      <form id="wstConfigForm" class="config-form">
+        <div class="config-field">
+          <label for="adminToken">管理口令</label>
+          <input id="adminToken" name="adminToken" type="password" autocomplete="current-password" placeholder="云端必填">
+        </div>
+        <div class="config-field">
+          <label for="wstUser">沃斯彤账号</label>
+          <input id="wstUser" name="user" type="text" inputmode="numeric" autocomplete="username" placeholder="例如 61081" required>
+        </div>
+        <div class="config-field">
+          <label for="wstPass">沃斯彤密码</label>
+          <input id="wstPass" name="password" type="password" autocomplete="new-password" required>
+        </div>
+        <button class="config-button" type="submit">切换账号</button>
+        <div id="configStatus" class="config-status">等待配置</div>
+      </form>
+    </section>
   </main>
 
   <script>
     const history = [];
     const maxSamples = 60;
     let visitorWeatherAt = 0;
+    let requiresAdminToken = false;
     const el = (id) => document.getElementById(id);
     const fmt = (n, digits = 1) => Number.isFinite(Number(n)) ? Number(n).toFixed(digits).replace(/\\.0$/, '') : '--';
 
@@ -1239,6 +1360,59 @@
     function visibleDeviceData(d) {
       const hiddenKeys = new Set(['Pm25', 'Pm10', 'TVOC', 'CarbonDioxide', 'PositiveIon']);
       return Object.fromEntries(Object.entries(d).filter(([key]) => !hiddenKeys.has(key)));
+    }
+
+    async function loadConfig() {
+      try {
+        const res = await fetch('/config', { cache: 'no-store' });
+        if (!res.ok) throw new Error(`config ${res.status}`);
+        const config = await res.json();
+        requiresAdminToken = Boolean(config.requiresAdminToken);
+        el('currentWstUser').textContent = config.wstUser || '未设置';
+        el('configStatus').textContent = requiresAdminToken ? '云端配置需要管理口令' : '本机调试可直接切换';
+      } catch (err) {
+        el('configStatus').textContent = '配置状态读取失败';
+      }
+    }
+
+    async function submitWstConfig(event) {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const button = form.querySelector('button');
+      const user = el('wstUser').value.trim();
+      const password = el('wstPass').value.trim();
+      const token = el('adminToken').value.trim();
+      if (!user || !password) {
+        el('configStatus').textContent = '请填写账号和密码';
+        return;
+      }
+      if (requiresAdminToken && !token) {
+        el('configStatus').textContent = '云端切换需要管理口令';
+        return;
+      }
+      button.disabled = true;
+      el('configStatus').textContent = '正在切换账号...';
+      try {
+        const res = await fetch('/config/wst', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'X-Admin-Token': token } : {}),
+          },
+          body: JSON.stringify({ user, password }),
+        });
+        const payload = await res.json();
+        if (!res.ok || !payload.ok) throw new Error(payload.message || '切换失败');
+        el('configStatus').textContent = payload.message || '账号已切换';
+        el('currentWstUser').textContent = user.length > 5 ? `${user.slice(0, 2)}***${user.slice(-2)}` : `${user[0] || ''}***${user.slice(-1)}`;
+        el('wstPass').value = '';
+        history.length = 0;
+        drawChart();
+      } catch (err) {
+        el('configStatus').textContent = err.message || '切换失败';
+      } finally {
+        button.disabled = false;
+      }
     }
 
     function drawChart() {
@@ -1350,6 +1524,10 @@
         el('deviceId').textContent = `Device ${payload.device.DeviceID || '--'}`;
       }
 
+      if (payload.config?.wstUser) {
+        el('currentWstUser').textContent = payload.config.wstUser;
+      }
+
       if (!payload.data) return;
       const d = payload.data;
       const [quality, qualityText, ionLevel] = anionLevelFrom(d);
@@ -1379,6 +1557,8 @@
     }
 
     updateClock();
+    loadConfig();
+    el('wstConfigForm').addEventListener('submit', submitWstConfig);
     setInterval(updateClock, 1000);
     fetch('/latest').then(r => r.json()).then(applyPayload).catch(() => {});
     refreshVisitorWeather(true);
