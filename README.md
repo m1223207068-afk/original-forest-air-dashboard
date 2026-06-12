@@ -71,3 +71,49 @@ IP_WEATHER_PROVIDER=ipwhois
 ```bash
 python3 server.py
 ```
+
+## 国内访问部署
+
+Render 在国内访问可能不稳定。国内优先建议部署到腾讯云 CloudBase 云托管，项目已提供 `Dockerfile`，可直接按容器服务部署。
+
+CloudBase 云托管关键配置:
+
+```text
+服务类型: Web 服务 / 云托管
+部署方式: GitHub 仓库或本地代码上传
+构建方式: Dockerfile
+容器端口: 8080
+启动命令: 使用 Dockerfile 默认 CMD
+```
+
+环境变量至少配置:
+
+```text
+WST_USER=你的沃斯彤账号
+WST_PASS=你的沃斯彤密码
+WEATHER_PROVIDER=open_meteo
+WEATHER_LATITUDE=30.42
+WEATHER_LONGITUDE=120.30
+WEATHER_CITY_NAME=浙江 杭州临平
+IP_WEATHER_PROVIDER=ipwhois
+```
+
+如果使用高德天气，把 `WEATHER_PROVIDER` 改为 `amap`，并额外设置:
+
+```text
+AMAP_KEY=你的高德Web服务Key
+AMAP_CITY=330113
+```
+
+本地可先用 Docker 验证:
+
+```bash
+docker build -t original-forest-air-dashboard .
+docker run --rm -p 8080:8080 --env-file .env original-forest-air-dashboard
+```
+
+然后打开:
+
+```text
+http://127.0.0.1:8080
+```
