@@ -7,7 +7,7 @@
 方式一：直接用环境变量启动。
 
 ```bash
-WST_USER=61081 WST_PASS=61081 python3 server.py
+WST_USER=你的沃斯彤账号 WST_PASS=你的沃斯彤密码 python3 server.py
 ```
 
 方式二：复制 `.env.example` 为 `.env`，填入 `AMAP_KEY` 后启动。
@@ -54,8 +54,8 @@ Open-Meteo 接口地址为 `https://api.open-meteo.com/v1/forecast`，无须注�
 部署时环境变量至少配置:
 
 ```text
-WST_USER=61081
-WST_PASS=61081
+WST_USER=你的沃斯彤账号
+WST_PASS=你的沃斯彤密码
 WEATHER_PROVIDER=open_meteo
 WEATHER_LATITUDE=30.42
 WEATHER_LONGITUDE=120.30
