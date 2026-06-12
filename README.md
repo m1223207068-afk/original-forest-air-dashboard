@@ -1,13 +1,13 @@
 # 原始森林生态空气数据看板
 
-本地网页看板会连接沃斯彤实时 WebSocket，并在浏览器中显示最新负氧离子值、设备环境指标、趋势曲线，以及实时天气。
+本地网页看板会连接沃斯彤实时 WebSocket，并在浏览器中显示最新负氧离子值、设备环境指标、趋势曲线，以及实时天气。打开网页后先输入沃斯彤账号密码登录，每个浏览器会话独立连接自己的设备，适合多个门店使用同一个网址。
 
 ## 启动
 
-方式一：直接用环境变量启动。
+方式一：直接启动，打开网页后登录沃斯彤账号。
 
 ```bash
-WST_USER=你的沃斯彤账号 WST_PASS=你的沃斯彤密码 python3 server.py
+python3 server.py
 ```
 
 方式二：复制 `.env.example` 为 `.env`，填入 `AMAP_KEY` 后启动。
@@ -26,16 +26,16 @@ http://127.0.0.1:8787
 ## 接口
 
 - `GET /` 看板页面
+- `GET /session` 当前浏览器登录状态
+- `POST /login` 使用沃斯彤账号密码创建当前浏览器会话
+- `POST /logout` 退出当前浏览器会话
 - `GET /latest` 最新状态 JSON
 - `GET /events` Server-Sent Events 实时流
 
 ## 配置
 
-源码不保存账号密码和高德 Key，运行时从环境变量读取。
+源码不保存门店账号密码。沃斯彤账号密码由用户打开网页后输入，后端只保存在当前运行进程的浏览器会话中。
 
-- `WST_USER`: 沃斯彤账号
-- `WST_PASS`: 沃斯彤密码
-- `ADMIN_TOKEN`: 页面底部切换沃斯彤账号密码时使用的管理口令。云端部署必须设置；为空时只允许本机访问接口
 - `WEATHER_PROVIDER`: 天气源，默认 `open_meteo`，无需 Key；也可设为 `amap`
 - `WEATHER_LATITUDE`: Open-Meteo 纬度，默认 `30.42`
 - `WEATHER_LONGITUDE`: Open-Meteo 经度，默认 `120.30`
@@ -55,12 +55,9 @@ Open-Meteo 接口地址为 `https://api.open-meteo.com/v1/forecast`，无须注�
 
 这个看板需要 Python 后端持续连接检测仪云端 WebSocket，建议部署到 Render 或 Koyeb 这类可运行长期 Web Service 的平台。Vercel、Netlify、Cloudflare Pages 更适合纯静态网页，不适合直接跑这个实时后端。
 
-部署时环境变量至少配置:
+部署时环境变量建议配置:
 
 ```text
-WST_USER=你的沃斯彤账号
-WST_PASS=你的沃斯彤密码
-ADMIN_TOKEN=请设置一个管理口令
 WEATHER_PROVIDER=open_meteo
 WEATHER_LATITUDE=30.42
 WEATHER_LONGITUDE=120.30
@@ -88,12 +85,9 @@ CloudBase 云托管关键配置:
 启动命令: 使用 Dockerfile 默认 CMD
 ```
 
-环境变量至少配置:
+环境变量建议配置:
 
 ```text
-WST_USER=你的沃斯彤账号
-WST_PASS=你的沃斯彤密码
-ADMIN_TOKEN=请设置一个管理口令
 WEATHER_PROVIDER=open_meteo
 WEATHER_LATITUDE=30.42
 WEATHER_LONGITUDE=120.30

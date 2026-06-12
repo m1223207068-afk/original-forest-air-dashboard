@@ -6,12 +6,6 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: python3 server.py
     envVars:
-      - key: WST_USER
-        sync: false
-      - key: WST_PASS
-        sync: false
-      - key: ADMIN_TOKEN
-        sync: false
       - key: WEATHER_PROVIDER
         value: open_meteo
       - key: WEATHER_LATITUDE

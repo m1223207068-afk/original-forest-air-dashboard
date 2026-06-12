@@ -2,9 +2,11 @@
 import json
 import os
 import queue
+import secrets
 import threading
 import time
 from datetime import datetime
+from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
 from pathlib import Path
@@ -35,9 +37,6 @@ load_env_file(ROOT / ".env")
 
 HOST = os.getenv("DASHBOARD_HOST", "0.0.0.0" if os.getenv("PORT") else "127.0.0.1")
 PORT = int(os.getenv("DASHBOARD_PORT") or os.getenv("PORT") or "8787")
-WST_USER = os.getenv("WST_USER", "")
-WST_PASS = os.getenv("WST_PASS", "")
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
 AMAP_KEY = os.getenv("AMAP_KEY", "")
 AMAP_CITY = os.getenv("AMAP_CITY", "330113")
 WEATHER_PROVIDER = os.getenv("WEATHER_PROVIDER", "open_meteo")
@@ -47,23 +46,17 @@ WEATHER_CITY_NAME = os.getenv("WEATHER_CITY_NAME", "浙江 杭州临平")
 WEATHER_INTERVAL = int(os.getenv("WEATHER_INTERVAL", "600"))
 IP_WEATHER_PROVIDER = os.getenv("IP_WEATHER_PROVIDER", "ipwhois")
 
-state_lock = threading.Lock()
-latest = {
-    "connected": False,
-    "status": "starting",
-    "message": "正在启动",
-    "updatedAt": None,
-    "device": None,
-    "data": None,
+weather_lock = threading.Lock()
+weather_state = {
     "weather": None,
     "weatherError": None,
-    "error": None,
 }
-subscribers = set()
-credentials_lock = threading.Lock()
-credentials_changed = threading.Event()
-upstream_ws = None
-upstream_generation = 0
+sessions_lock = threading.Lock()
+sessions = {}
+
+
+def now_iso():
+    return datetime.now().isoformat(timespec="seconds")
 
 
 def mask_account(value):
@@ -76,73 +69,149 @@ def mask_account(value):
     return f"{value[:2]}***{value[-2:]}"
 
 
-def current_credentials():
-    with credentials_lock:
-        return WST_USER, WST_PASS, upstream_generation
+class WstSession:
+    def __init__(self, token, user, password):
+        self.token = token
+        self.user = str(user or "").strip()
+        self.password = str(password or "").strip()
+        self.lock = threading.Lock()
+        self.subscribers = set()
+        self.stop_event = threading.Event()
+        self.ws = None
+        self.thread = None
+        self.latest = {
+            "connected": False,
+            "status": "starting",
+            "message": "正在启动",
+            "updatedAt": None,
+            "device": None,
+            "data": None,
+            "weather": None,
+            "weatherError": None,
+            "error": None,
+            "config": {"wstUser": mask_account(self.user)},
+            "authenticated": True,
+        }
 
+    def start(self):
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread.start()
 
-def set_credentials(user, password):
-    global WST_USER, WST_PASS, upstream_generation, upstream_ws
-    user = str(user or "").strip()
-    password = str(password or "").strip()
-    if not user or not password:
-        return False, "账号和密码不能为空"
+    def stop(self):
+        self.stop_event.set()
+        if self.ws:
+            try:
+                self.ws.close()
+            except Exception:
+                pass
 
-    with credentials_lock:
-        WST_USER = user
-        WST_PASS = password
-        upstream_generation += 1
-        ws = upstream_ws
-    if ws:
-        try:
-            ws.close()
-        except Exception:
-            pass
-    credentials_changed.set()
-    update_state(
-        connected=False,
-        status="credentials_updated",
-        message="沃斯彤账号已更新，正在重新连接",
-        updatedAt=datetime.now().isoformat(timespec="seconds"),
-        device=None,
-        data=None,
-        config={"wstUser": mask_account(user)},
-        error=None,
-    )
-    return True, "账号已更新，正在重新连接"
+    def snapshot(self):
+        with self.lock:
+            payload = dict(self.latest)
+        with weather_lock:
+            payload["weather"] = weather_state.get("weather")
+            payload["weatherError"] = weather_state.get("weatherError")
+        return payload
 
+    def publish(self, payload):
+        dead = []
+        for sub in list(self.subscribers):
+            try:
+                sub.put_nowait(payload)
+            except Exception:
+                dead.append(sub)
+        for sub in dead:
+            self.subscribers.discard(sub)
 
-def is_local_request(client_address):
-    host = client_address[0] if client_address else ""
-    return host in {"127.0.0.1", "::1", "localhost"}
+    def update(self, **changes):
+        with self.lock:
+            self.latest.update(changes)
+            payload = dict(self.latest)
+        with weather_lock:
+            payload["weather"] = weather_state.get("weather")
+            payload["weatherError"] = weather_state.get("weatherError")
+        self.publish(payload)
 
+    def handle_message(self, message):
+        for part in split_frames(message):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                parsed = json.loads(part)
+            except json.JSONDecodeError:
+                self.update(message=part[:200], updatedAt=now_iso())
+                continue
 
-def authorized(headers, client_address):
-    if ADMIN_TOKEN:
-        auth = headers.get("Authorization", "")
-        token = headers.get("X-Admin-Token", "")
-        if auth.startswith("Bearer "):
-            token = auth.replace("Bearer ", "", 1).strip()
-        return token == ADMIN_TOKEN
-    return is_local_request(client_address)
+            if isinstance(parsed, dict) and "Anion" in parsed:
+                self.update(
+                    connected=True,
+                    status="live",
+                    message="实时数据已更新",
+                    updatedAt=now_iso(),
+                    data=parsed,
+                    error=None,
+                )
+            elif isinstance(parsed, list) and parsed and isinstance(parsed[0], dict) and "DeviceID" in parsed[0]:
+                self.update(
+                    connected=True,
+                    status="device",
+                    message="设备信息已载入",
+                    updatedAt=now_iso(),
+                    device=parsed[0],
+                    error=None,
+                )
+            elif isinstance(parsed, dict) and parsed.get("Result") == "Success":
+                self.update(
+                    connected=True,
+                    status="connected",
+                    message=parsed.get("Message", "登录成功"),
+                    updatedAt=now_iso(),
+                    error=None,
+                )
+            elif isinstance(parsed, dict):
+                self.update(
+                    connected=True,
+                    status="message",
+                    message=parsed.get("Message") or parsed.get("msg") or "收到服务器消息",
+                    updatedAt=now_iso(),
+                    error=None,
+                )
 
+    def run(self):
+        if not self.user or not self.password:
+            self.update(status="missing_credentials", message="请先登录沃斯彤账号", error="missing credentials")
+            return
 
-def publish(payload):
-    dead = []
-    for sub in list(subscribers):
-        try:
-            sub.put_nowait(payload)
-        except Exception:
-            dead.append(sub)
-    for sub in dead:
-        subscribers.discard(sub)
-
-
-def update_state(**changes):
-    with state_lock:
-        latest.update(changes)
-        payload = dict(latest)
-    publish(payload)
+        url = f"ws://register.woston.cn:8888/User/{self.user}/{self.password}"
+        while not self.stop_event.is_set():
+            self.update(connected=False, status="connecting", message="正在连接检测仪云端", error=None)
+            try:
+                ws = websocket.create_connection(url, timeout=20)
+                self.ws = ws
+                self.update(connected=True, status="connected", message="已连接，等待实时数据", error=None)
+                ws.settimeout(70)
+                while not self.stop_event.is_set():
+                    try:
+                        self.handle_message(ws.recv())
+                    except websocket.WebSocketTimeoutException:
+                        self.update(
+                            connected=True,
+                            status="waiting",
+                            message="连接正常，等待下一次设备上报",
+                            updatedAt=now_iso(),
+                        )
+            except Exception as exc:
+                if not self.stop_event.is_set():
+                    self.update(connected=False, status="reconnecting", message="连接断开，5 秒后重连", error=str(exc))
+                    time.sleep(5)
+            finally:
+                try:
+                    if self.ws:
+                        self.ws.close()
+                except Exception:
+                    pass
+                self.ws = None
 
 
 def split_frames(message):
@@ -151,108 +220,28 @@ def split_frames(message):
     return [message]
 
 
-def handle_upstream_message(message):
-    for part in split_frames(message):
-        part = part.strip()
-        if not part:
-            continue
-        try:
-            parsed = json.loads(part)
-        except json.JSONDecodeError:
-            update_state(message=part[:200], updatedAt=datetime.now().isoformat(timespec="seconds"))
-            continue
-
-        if isinstance(parsed, dict) and "Anion" in parsed:
-            update_state(
-                connected=True,
-                status="live",
-                message="实时数据已更新",
-                updatedAt=datetime.now().isoformat(timespec="seconds"),
-                data=parsed,
-                error=None,
-            )
-        elif isinstance(parsed, list) and parsed and isinstance(parsed[0], dict) and "DeviceID" in parsed[0]:
-            update_state(
-                connected=True,
-                status="device",
-                message="设备信息已载入",
-                updatedAt=datetime.now().isoformat(timespec="seconds"),
-                device=parsed[0],
-                error=None,
-            )
-        elif isinstance(parsed, dict) and parsed.get("Result") == "Success":
-            update_state(
-                connected=True,
-                status="connected",
-                message=parsed.get("Message", "登录成功"),
-                updatedAt=datetime.now().isoformat(timespec="seconds"),
-                error=None,
-            )
-        elif isinstance(parsed, dict):
-            update_state(
-                connected=True,
-                status="message",
-                message=parsed.get("Message") or parsed.get("msg") or "收到服务器消息",
-                updatedAt=datetime.now().isoformat(timespec="seconds"),
-                error=None,
-            )
+def create_session(user, password):
+    token = secrets.token_urlsafe(32)
+    session = WstSession(token, user, password)
+    with sessions_lock:
+        sessions[token] = session
+    session.start()
+    return session
 
 
-def upstream_loop():
-    global upstream_ws
-    while True:
-        user, password, generation = current_credentials()
-        if not user or not password:
-            update_state(
-                connected=False,
-                status="missing_credentials",
-                message="请在页面底部设置沃斯彤账号和密码",
-                config={"wstUser": ""},
-                error="missing credentials",
-            )
-            credentials_changed.wait(timeout=5)
-            credentials_changed.clear()
-            continue
+def get_session(token):
+    if not token:
+        return None
+    with sessions_lock:
+        return sessions.get(token)
 
-        url = f"ws://register.woston.cn:8888/User/{user}/{password}"
-        update_state(connected=False, status="connecting", message="正在连接检测仪云端", error=None)
-        try:
-            ws = websocket.create_connection(url, timeout=20)
-            with credentials_lock:
-                if generation != upstream_generation:
-                    ws.close()
-                    continue
-                upstream_ws = ws
-            update_state(
-                connected=True,
-                status="connected",
-                message="已连接，等待实时数据",
-                config={"wstUser": mask_account(user)},
-                error=None,
-            )
-            ws.settimeout(70)
-            while True:
-                _, _, current_generation = current_credentials()
-                if current_generation != generation:
-                    break
-                try:
-                    handle_upstream_message(ws.recv())
-                except websocket.WebSocketTimeoutException:
-                    update_state(
-                        connected=True,
-                        status="waiting",
-                        message="连接正常，等待下一次设备上报",
-                        updatedAt=datetime.now().isoformat(timespec="seconds"),
-                    )
-        except Exception as exc:
-            _, _, current_generation = current_credentials()
-            if current_generation == generation:
-                update_state(connected=False, status="reconnecting", message="连接断开，5 秒后重连", error=str(exc))
-            time.sleep(5)
-        finally:
-            with credentials_lock:
-                if upstream_ws is locals().get("ws"):
-                    upstream_ws = None
+
+def remove_session(token):
+    with sessions_lock:
+        session = sessions.pop(token, None)
+    if session:
+        session.stop()
+    return session
 
 
 WEATHER_CODE_TEXT = {
@@ -360,6 +349,16 @@ def fallback_weather():
     )
 
 
+def update_weather_state(weather=None, weather_error=None):
+    with weather_lock:
+        weather_state["weather"] = weather
+        weather_state["weatherError"] = weather_error
+    with sessions_lock:
+        active_sessions = list(sessions.values())
+    for session in active_sessions:
+        session.publish(session.snapshot())
+
+
 def is_public_ip(value):
     try:
         parsed = ip_address(value)
@@ -452,10 +451,7 @@ def visitor_weather(headers, client_address):
 def weather_loop():
     provider = WEATHER_PROVIDER.lower()
     if provider == "amap" and not AMAP_KEY:
-        update_state(
-            weather=None,
-            weatherError="weather_not_configured",
-        )
+        update_weather_state(weather=None, weather_error="weather_not_configured")
         return
 
     while True:
@@ -469,17 +465,13 @@ def weather_loop():
                 })
                 url = f"https://restapi.amap.com/v3/weather/weatherInfo?{params}"
                 parser = parse_amap_weather
+                with urlopen(url, timeout=12) as resp:
+                    weather, err = parser(resp.read().decode("utf-8", "replace"))
             else:
                 weather, err = fallback_weather()
-                update_state(weather=weather, weatherError=err)
-                time.sleep(max(60, WEATHER_INTERVAL))
-                continue
-
-            with urlopen(url, timeout=12) as resp:
-                weather, err = parser(resp.read().decode("utf-8", "replace"))
-            update_state(weather=weather, weatherError=err)
+            update_weather_state(weather=weather, weather_error=err)
         except Exception as exc:
-            update_state(weatherError=str(exc))
+            update_weather_state(weather_error=str(exc))
         time.sleep(max(60, WEATHER_INTERVAL))
 
 
@@ -487,15 +479,17 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         return
 
-    def _send_headers(self, status=200, content_type="text/html; charset=utf-8"):
+    def _send_headers(self, status=200, content_type="text/html; charset=utf-8", extra_headers=None):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Cache-Control", "no-store")
+        for key, value in (extra_headers or {}).items():
+            self.send_header(key, value)
         self.end_headers()
 
-    def _send_json(self, payload, status=200):
+    def _send_json(self, payload, status=200, extra_headers=None):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self._send_headers(status, "application/json; charset=utf-8")
+        self._send_headers(status, "application/json; charset=utf-8", extra_headers)
         self.wfile.write(body)
 
     def _read_json(self):
@@ -504,6 +498,17 @@ class Handler(BaseHTTPRequestHandler):
             return None
         raw = self.rfile.read(length).decode("utf-8", "replace")
         return json.loads(raw)
+
+    def _session_token(self):
+        jar = cookies.SimpleCookie(self.headers.get("Cookie", ""))
+        morsel = jar.get("wst_session")
+        return morsel.value if morsel else ""
+
+    def _session(self):
+        return get_session(self._session_token())
+
+    def _cookie_header(self, token, max_age=86400):
+        return f"wst_session={token}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Lax"
 
     def do_GET(self):
         path = urlparse(self.path).path
@@ -524,33 +529,43 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(target.read_bytes())
                 return
 
-        if path == "/latest":
-            with state_lock:
-                body = json.dumps(latest, ensure_ascii=False).encode("utf-8")
-            self._send_headers(200, "application/json; charset=utf-8")
-            self.wfile.write(body)
+        if path == "/session":
+            session = self._session()
+            self._send_json({
+                "authenticated": bool(session),
+                "wstUser": mask_account(session.user) if session else "",
+            })
             return
 
-        if path == "/config":
-            user, _, _ = current_credentials()
-            self._send_json({
-                "wstUser": mask_account(user),
-                "requiresAdminToken": bool(ADMIN_TOKEN),
-                "localOnly": not bool(ADMIN_TOKEN),
-            })
+        if path == "/latest":
+            session = self._session()
+            if not session:
+                self._send_json({
+                    "authenticated": False,
+                    "connected": False,
+                    "status": "login_required",
+                    "message": "请先登录沃斯彤账号",
+                    "data": None,
+                    "device": None,
+                    "error": None,
+                }, 401)
+                return
+            self._send_json(session.snapshot())
             return
 
         if path == "/weather":
             weather, err = visitor_weather(self.headers, self.client_address)
-            body = json.dumps({
+            self._send_json({
                 "weather": weather,
                 "weatherError": err,
-            }, ensure_ascii=False).encode("utf-8")
-            self._send_headers(200, "application/json; charset=utf-8")
-            self.wfile.write(body)
+            })
             return
 
         if path == "/events":
+            session = self._session()
+            if not session:
+                self._send_json({"authenticated": False, "message": "请先登录沃斯彤账号"}, 401)
+                return
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-cache")
@@ -558,10 +573,9 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
 
             q = queue.Queue(maxsize=10)
-            subscribers.add(q)
+            session.subscribers.add(q)
             try:
-                with state_lock:
-                    initial = dict(latest)
+                initial = session.snapshot()
                 self.wfile.write(f"data: {json.dumps(initial, ensure_ascii=False)}\n\n".encode("utf-8"))
                 self.wfile.flush()
                 while True:
@@ -569,7 +583,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8"))
                     self.wfile.flush()
             except Exception:
-                subscribers.discard(q)
+                session.subscribers.discard(q)
             return
 
         self._send_headers(404, "text/plain; charset=utf-8")
@@ -577,33 +591,39 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path != "/config/wst":
-            self._send_json({"ok": False, "message": "not found"}, 404)
-            return
-
-        if not authorized(self.headers, self.client_address):
+        if path == "/login":
+            try:
+                payload = self._read_json() or {}
+            except Exception:
+                self._send_json({"ok": False, "message": "请求格式错误"}, 400)
+                return
+            user = str(payload.get("user") or "").strip()
+            password = str(payload.get("password") or "").strip()
+            if not user or not password:
+                self._send_json({"ok": False, "message": "请输入沃斯彤账号和密码"}, 400)
+                return
+            old_token = self._session_token()
+            if old_token:
+                remove_session(old_token)
+            session = create_session(user, password)
             self._send_json({
-                "ok": False,
-                "message": "未授权。云端请先设置 ADMIN_TOKEN 环境变量，并在页面输入管理口令。",
-            }, 401)
+                "ok": True,
+                "message": "登录成功，正在连接设备",
+                "wstUser": mask_account(user),
+            }, extra_headers={"Set-Cookie": self._cookie_header(session.token)})
             return
 
-        try:
-            payload = self._read_json()
-        except Exception:
-            self._send_json({"ok": False, "message": "请求格式错误"}, 400)
+        if path == "/logout":
+            token = self._session_token()
+            if token:
+                remove_session(token)
+            self._send_json({"ok": True}, extra_headers={"Set-Cookie": self._cookie_header("", max_age=0)})
             return
 
-        ok, message = set_credentials(
-            (payload or {}).get("user"),
-            (payload or {}).get("password"),
-        )
-        status = 200 if ok else 400
-        self._send_json({"ok": ok, "message": message}, status)
+        self._send_json({"ok": False, "message": "not found"}, 404)
 
 
 def main():
-    threading.Thread(target=upstream_loop, daemon=True).start()
     threading.Thread(target=weather_loop, daemon=True).start()
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"Dashboard: http://{HOST}:{PORT}")

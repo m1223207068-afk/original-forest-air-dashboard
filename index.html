@@ -72,6 +72,136 @@
       z-index: 1;
     }
 
+    body:not(.is-authenticated) main {
+      filter: blur(12px) brightness(0.56);
+      pointer-events: none;
+      user-select: none;
+    }
+
+    .login-screen {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background:
+        radial-gradient(circle at 50% 24%, rgba(39,240,139,0.16), transparent 32%),
+        linear-gradient(180deg, rgba(2,8,6,0.72), rgba(2,8,6,0.92));
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+    }
+
+    body.is-authenticated .login-screen {
+      display: none;
+    }
+
+    .login-panel {
+      width: min(460px, 100%);
+      border: 1px solid var(--glass-line);
+      border-radius: 24px;
+      background:
+        linear-gradient(145deg, rgba(255,255,255,0.1), rgba(255,255,255,0.035)),
+        rgba(8,23,20,0.76);
+      box-shadow: var(--shadow);
+      padding: 26px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .login-panel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 20% 0%, rgba(255,225,191,0.14), transparent 28%),
+        radial-gradient(circle at 80% 30%, rgba(84,255,225,0.12), transparent 28%);
+    }
+
+    .login-panel > * {
+      position: relative;
+      z-index: 1;
+    }
+
+    .login-brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 22px;
+    }
+
+    .login-brand img {
+      width: 64px;
+      height: 50px;
+      object-fit: contain;
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 14px;
+      background: rgba(255,255,255,0.08);
+      padding: 5px;
+    }
+
+    .login-brand strong {
+      display: block;
+      font-size: 24px;
+      color: var(--brand-3);
+    }
+
+    .login-brand span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .login-form {
+      display: grid;
+      gap: 14px;
+    }
+
+    .login-field {
+      display: grid;
+      gap: 7px;
+    }
+
+    .login-field label {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .login-field input {
+      width: 100%;
+      height: 46px;
+      border: 1px solid rgba(255,255,255,0.13);
+      border-radius: 14px;
+      outline: none;
+      background: rgba(255,255,255,0.06);
+      color: var(--ink);
+      padding: 0 14px;
+      font-size: 15px;
+    }
+
+    .login-field input:focus {
+      border-color: rgba(84,255,225,0.48);
+      box-shadow: 0 0 0 3px rgba(84,255,225,0.1);
+    }
+
+    .login-button {
+      height: 46px;
+      border: 1px solid rgba(84,255,225,0.36);
+      border-radius: 14px;
+      background: linear-gradient(135deg, rgba(39,240,139,0.28), rgba(84,255,225,0.14));
+      color: #ecfff6;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .login-status {
+      min-height: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
     .topbar {
       height: 72px;
       display: grid;
@@ -1021,7 +1151,7 @@
       position: relative;
       z-index: 1;
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+      grid-template-columns: minmax(180px, 1fr) auto;
       gap: 10px;
       align-items: end;
     }
@@ -1161,6 +1291,30 @@
   </style>
 </head>
 <body>
+  <section id="loginScreen" class="login-screen">
+    <div class="login-panel">
+      <div class="login-brand">
+        <img src="/assets/original_forest_logo.png" alt="原始森林">
+        <div>
+          <strong>原始森林数据看板</strong>
+          <span>请先登录沃斯彤账号以连接对应设备</span>
+        </div>
+      </div>
+      <form id="loginForm" class="login-form">
+        <div class="login-field">
+          <label for="loginUser">沃斯彤账号</label>
+          <input id="loginUser" type="text" inputmode="numeric" autocomplete="username" required>
+        </div>
+        <div class="login-field">
+          <label for="loginPass">沃斯彤密码</label>
+          <input id="loginPass" type="password" autocomplete="current-password" required>
+        </div>
+        <button class="login-button" type="submit">登录并连接设备</button>
+        <div id="loginStatus" class="login-status">每个门店可使用自己的账号登录，同一网址互不影响。</div>
+      </form>
+    </div>
+  </section>
+
   <main>
     <header class="topbar">
       <div class="brand">
@@ -1271,24 +1425,16 @@
 
     <section class="card login-config">
       <div class="config-copy">
-        <strong>设备登录配置</strong>
-        <span>当前账号：<b id="currentWstUser">--</b>。提交后后端会断开旧连接，并用新的沃斯彤账号重新拉取实时数据。</span>
+        <strong>当前登录</strong>
+        <span>沃斯彤账号：<b id="currentWstUser">--</b>。如需切换门店，请退出后重新登录对应门店账号。</span>
       </div>
       <form id="wstConfigForm" class="config-form">
         <div class="config-field">
-          <label for="adminToken">管理口令</label>
-          <input id="adminToken" name="adminToken" type="password" autocomplete="current-password" placeholder="云端必填">
+          <label for="sessionUser">会话账号</label>
+          <input id="sessionUser" type="text" value="--" readonly>
         </div>
-        <div class="config-field">
-          <label for="wstUser">沃斯彤账号</label>
-          <input id="wstUser" name="user" type="text" inputmode="numeric" autocomplete="username" placeholder="例如 61081" required>
-        </div>
-        <div class="config-field">
-          <label for="wstPass">沃斯彤密码</label>
-          <input id="wstPass" name="password" type="password" autocomplete="new-password" required>
-        </div>
-        <button class="config-button" type="submit">切换账号</button>
-        <div id="configStatus" class="config-status">等待配置</div>
+        <button class="config-button" type="submit">退出登录</button>
+        <div id="configStatus" class="config-status">已登录后可查看设备实时数据</div>
       </form>
     </section>
   </main>
@@ -1297,7 +1443,7 @@
     const history = [];
     const maxSamples = 60;
     let visitorWeatherAt = 0;
-    let requiresAdminToken = false;
+    let source = null;
     const el = (id) => document.getElementById(id);
     const fmt = (n, digits = 1) => Number.isFinite(Number(n)) ? Number(n).toFixed(digits).replace(/\\.0$/, '') : '--';
 
@@ -1362,57 +1508,88 @@
       return Object.fromEntries(Object.entries(d).filter(([key]) => !hiddenKeys.has(key)));
     }
 
-    async function loadConfig() {
-      try {
-        const res = await fetch('/config', { cache: 'no-store' });
-        if (!res.ok) throw new Error(`config ${res.status}`);
-        const config = await res.json();
-        requiresAdminToken = Boolean(config.requiresAdminToken);
-        el('currentWstUser').textContent = config.wstUser || '未设置';
-        el('configStatus').textContent = requiresAdminToken ? '云端配置需要管理口令' : '本机调试可直接切换';
-      } catch (err) {
-        el('configStatus').textContent = '配置状态读取失败';
+    function setAuthenticated(isAuthed, user = '') {
+      document.body.classList.toggle('is-authenticated', isAuthed);
+      el('currentWstUser').textContent = user || '--';
+      el('sessionUser').value = user || '--';
+      if (!isAuthed) {
+        el('statusText').textContent = '请先登录';
       }
     }
 
-    async function submitWstConfig(event) {
+    async function loadSession() {
+      try {
+        const res = await fetch('/session', { cache: 'no-store' });
+        const session = await res.json();
+        setAuthenticated(Boolean(session.authenticated), session.wstUser || '');
+        if (session.authenticated) {
+          startDataStream();
+        }
+      } catch (err) {
+        setAuthenticated(false);
+      }
+    }
+
+    async function submitLogin(event) {
       event.preventDefault();
       const form = event.currentTarget;
       const button = form.querySelector('button');
-      const user = el('wstUser').value.trim();
-      const password = el('wstPass').value.trim();
-      const token = el('adminToken').value.trim();
+      const user = el('loginUser').value.trim();
+      const password = el('loginPass').value.trim();
       if (!user || !password) {
-        el('configStatus').textContent = '请填写账号和密码';
-        return;
-      }
-      if (requiresAdminToken && !token) {
-        el('configStatus').textContent = '云端切换需要管理口令';
+        el('loginStatus').textContent = '请填写账号和密码';
         return;
       }
       button.disabled = true;
-      el('configStatus').textContent = '正在切换账号...';
+      el('loginStatus').textContent = '正在登录并连接设备...';
       try {
-        const res = await fetch('/config/wst', {
+        const res = await fetch('/login', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { 'X-Admin-Token': token } : {}),
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ user, password }),
         });
         const payload = await res.json();
-        if (!res.ok || !payload.ok) throw new Error(payload.message || '切换失败');
-        el('configStatus').textContent = payload.message || '账号已切换';
-        el('currentWstUser').textContent = user.length > 5 ? `${user.slice(0, 2)}***${user.slice(-2)}` : `${user[0] || ''}***${user.slice(-1)}`;
-        el('wstPass').value = '';
+        if (!res.ok || !payload.ok) throw new Error(payload.message || '登录失败');
+        el('loginPass').value = '';
+        el('loginStatus').textContent = payload.message || '登录成功';
+        setAuthenticated(true, payload.wstUser || '');
         history.length = 0;
         drawChart();
+        startDataStream();
       } catch (err) {
-        el('configStatus').textContent = err.message || '切换失败';
+        el('loginStatus').textContent = err.message || '登录失败';
       } finally {
         button.disabled = false;
       }
+    }
+
+    async function logout(event) {
+      event.preventDefault();
+      try {
+        await fetch('/logout', { method: 'POST' });
+      } catch (err) {}
+      if (source) {
+        source.close();
+        source = null;
+      }
+      history.length = 0;
+      drawChart();
+      setAuthenticated(false);
+      el('loginStatus').textContent = '已退出，请重新登录门店账号';
+    }
+
+    function startDataStream() {
+      if (source) source.close();
+      fetch('/latest').then(r => {
+        if (!r.ok) throw new Error('login required');
+        return r.json();
+      }).then(applyPayload).catch(() => setAuthenticated(false));
+
+      source = new EventSource('/events');
+      source.onmessage = (event) => applyPayload(JSON.parse(event.data));
+      source.onerror = () => {
+        el('statusText').textContent = '本地连接中断，正在重试';
+      };
     }
 
     function drawChart() {
@@ -1526,6 +1703,7 @@
 
       if (payload.config?.wstUser) {
         el('currentWstUser').textContent = payload.config.wstUser;
+        el('sessionUser').value = payload.config.wstUser;
       }
 
       if (!payload.data) return;
@@ -1557,18 +1735,12 @@
     }
 
     updateClock();
-    loadConfig();
-    el('wstConfigForm').addEventListener('submit', submitWstConfig);
+    loadSession();
+    el('loginForm').addEventListener('submit', submitLogin);
+    el('wstConfigForm').addEventListener('submit', logout);
     setInterval(updateClock, 1000);
-    fetch('/latest').then(r => r.json()).then(applyPayload).catch(() => {});
     refreshVisitorWeather(true);
     setInterval(refreshVisitorWeather, 5 * 60 * 1000);
-
-    const source = new EventSource('/events');
-    source.onmessage = (event) => applyPayload(JSON.parse(event.data));
-    source.onerror = () => {
-      el('statusText').textContent = '本地连接中断，正在重试';
-    };
 
     window.addEventListener('resize', () => {
       drawChart();
