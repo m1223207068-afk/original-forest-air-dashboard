@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: original-forest-air-dashboard
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 server.py
+    envVars:
+      - key: WST_USER
+        sync: false
+      - key: WST_PASS
+        sync: false
+      - key: WEATHER_PROVIDER
+        value: open_meteo
+      - key: WEATHER_LATITUDE
+        value: "30.42"
+      - key: WEATHER_LONGITUDE
+        value: "120.30"
+      - key: WEATHER_CITY_NAME
+        value: 浙江 杭州临平

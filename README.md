@@ -1,0 +1,69 @@
+# 原始森林生态空气数据看板
+
+本地网页看板会连接沃斯彤实时 WebSocket，并在浏览器中显示最新负氧离子值、设备环境指标、趋势曲线，以及实时天气。
+
+## 启动
+
+方式一：直接用环境变量启动。
+
+```bash
+WST_USER=61081 WST_PASS=61081 python3 server.py
+```
+
+方式二：复制 `.env.example` 为 `.env`，填入 `AMAP_KEY` 后启动。
+
+```bash
+cp .env.example .env
+python3 server.py
+```
+
+然后打开:
+
+```text
+http://127.0.0.1:8787
+```
+
+## 接口
+
+- `GET /` 看板页面
+- `GET /latest` 最新状态 JSON
+- `GET /events` Server-Sent Events 实时流
+
+## 配置
+
+源码不保存账号密码和高德 Key，运行时从环境变量读取。
+
+- `WST_USER`: 沃斯彤账号
+- `WST_PASS`: 沃斯彤密码
+- `WEATHER_PROVIDER`: 天气源，默认 `open_meteo`，无需 Key；也可设为 `amap`
+- `WEATHER_LATITUDE`: Open-Meteo 纬度，默认 `30.42`
+- `WEATHER_LONGITUDE`: Open-Meteo 经度，默认 `120.30`
+- `WEATHER_CITY_NAME`: 看板显示的城市名，默认 `浙江 杭州临平`
+- `AMAP_KEY`: 高德开放平台 Web 服务 Key
+- `AMAP_CITY`: 高德城市 adcode，默认 `330113`，即杭州市临平区
+- `WEATHER_INTERVAL`: 天气刷新秒数，默认 `600`
+
+默认使用 Open-Meteo 免费天气接口，无需 `AMAP_KEY`。如果 `WEATHER_PROVIDER=amap` 但未设置 `AMAP_KEY`，看板会显示“天气接口待接入”，不会影响仪器实时数据展示。
+
+Open-Meteo 接口地址为 `https://api.open-meteo.com/v1/forecast`，无须注册和 Key。高德天气接口使用官方 Web 服务天气查询，地址为 `https://restapi.amap.com/v3/weather/weatherInfo`，需要高德开放平台的 Web 服务 Key。
+
+## 免费部署
+
+这个看板需要 Python 后端持续连接检测仪云端 WebSocket，建议部署到 Render 或 Koyeb 这类可运行长期 Web Service 的平台。Vercel、Netlify、Cloudflare Pages 更适合纯静态网页，不适合直接跑这个实时后端。
+
+部署时环境变量至少配置:
+
+```text
+WST_USER=61081
+WST_PASS=61081
+WEATHER_PROVIDER=open_meteo
+WEATHER_LATITUDE=30.42
+WEATHER_LONGITUDE=120.30
+WEATHER_CITY_NAME=浙江 杭州临平
+```
+
+启动命令:
+
+```bash
+python3 server.py
+```
