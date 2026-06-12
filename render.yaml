@@ -18,3 +18,5 @@ services:
         value: "120.30"
       - key: WEATHER_CITY_NAME
         value: 浙江 杭州临平
+      - key: IP_WEATHER_PROVIDER
+        value: ipwhois

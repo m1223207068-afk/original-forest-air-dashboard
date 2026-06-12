@@ -950,6 +950,7 @@
   <script>
     const history = [];
     const maxSamples = 60;
+    let visitorWeatherAt = 0;
     const el = (id) => document.getElementById(id);
     const fmt = (n, digits = 1) => Number.isFinite(Number(n)) ? Number(n).toFixed(digits).replace(/\\.0$/, '') : '--';
 
@@ -1052,7 +1053,7 @@
     function applyWeather(payload) {
       if (payload.weather) {
         const w = payload.weather;
-        el('weatherStatus').textContent = '实时刷新';
+        el('weatherStatus').textContent = w.ipMode ? '随 IP 自动定位' : '实时刷新';
         el('weatherCity').textContent = `${w.province || ''} ${w.city || ''}`.trim() || '本地天气';
         el('weatherVisual').dataset.weather = weatherVisualType(w.weather);
         el('weatherTemp').textContent = fmt(w.temperature, 0);
@@ -1075,9 +1076,24 @@
       }
     }
 
+    async function refreshVisitorWeather(force = false) {
+      const now = Date.now();
+      if (!force && now - visitorWeatherAt < 5 * 60 * 1000) return;
+      visitorWeatherAt = now;
+      try {
+        const res = await fetch('/weather', { cache: 'no-store' });
+        if (!res.ok) throw new Error(`weather ${res.status}`);
+        applyWeather(await res.json());
+      } catch (err) {
+        console.warn('visitor weather failed', err);
+      }
+    }
+
     function applyPayload(payload) {
       el('statusText').textContent = payload.data ? '负氧离子数据已更新' : (payload.message || payload.status || '等待数据');
-      applyWeather(payload);
+      if (!visitorWeatherAt || Date.now() - visitorWeatherAt > 8 * 60 * 1000) {
+        applyWeather(payload);
+      }
 
       if (payload.device) {
         el('deviceName').textContent = payload.device.DeviceName || '空气负离子检测仪器';
@@ -1113,6 +1129,8 @@
     updateClock();
     setInterval(updateClock, 1000);
     fetch('/latest').then(r => r.json()).then(applyPayload).catch(() => {});
+    refreshVisitorWeather(true);
+    setInterval(refreshVisitorWeather, 5 * 60 * 1000);
 
     const source = new EventSource('/events');
     source.onmessage = (event) => applyPayload(JSON.parse(event.data));

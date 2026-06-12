@@ -6,8 +6,9 @@ import threading
 import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from ipaddress import ip_address
 from pathlib import Path
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 from urllib.request import urlopen
 
 import websocket
@@ -43,6 +44,7 @@ WEATHER_LATITUDE = os.getenv("WEATHER_LATITUDE", "30.42")
 WEATHER_LONGITUDE = os.getenv("WEATHER_LONGITUDE", "120.30")
 WEATHER_CITY_NAME = os.getenv("WEATHER_CITY_NAME", "浙江 杭州临平")
 WEATHER_INTERVAL = int(os.getenv("WEATHER_INTERVAL", "600"))
+IP_WEATHER_PROVIDER = os.getenv("IP_WEATHER_PROVIDER", "ipwhois")
 
 state_lock = threading.Lock()
 latest = {
@@ -217,7 +219,7 @@ def parse_amap_weather(raw):
     }, None
 
 
-def parse_open_meteo_weather(raw):
+def parse_open_meteo_weather(raw, city_name=WEATHER_CITY_NAME):
     payload = json.loads(raw)
     current = payload.get("current") or {}
     if not current:
@@ -228,7 +230,7 @@ def parse_open_meteo_weather(raw):
     speed = current.get("wind_speed_10m")
     return {
         "province": "",
-        "city": WEATHER_CITY_NAME,
+        "city": city_name,
         "adcode": "",
         "weather": weather,
         "temperature": current.get("temperature_2m"),
@@ -239,6 +241,116 @@ def parse_open_meteo_weather(raw):
         "reporttime": current.get("time"),
         "source": "Open-Meteo",
     }, None
+
+
+def open_meteo_weather(latitude, longitude, city_name, timezone="auto"):
+    params = urlencode({
+        "latitude": latitude,
+        "longitude": longitude,
+        "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m",
+        "timezone": timezone or "auto",
+    })
+    url = f"https://api.open-meteo.com/v1/forecast?{params}"
+    with urlopen(url, timeout=12) as resp:
+        return parse_open_meteo_weather(resp.read().decode("utf-8", "replace"), city_name)
+
+
+def fallback_weather():
+    return open_meteo_weather(
+        WEATHER_LATITUDE,
+        WEATHER_LONGITUDE,
+        WEATHER_CITY_NAME,
+        "Asia/Shanghai",
+    )
+
+
+def is_public_ip(value):
+    try:
+        parsed = ip_address(value)
+    except ValueError:
+        return False
+    return not (
+        parsed.is_private
+        or parsed.is_loopback
+        or parsed.is_link_local
+        or parsed.is_multicast
+        or parsed.is_reserved
+        or parsed.is_unspecified
+    )
+
+
+def client_ip_from_headers(headers, client_address):
+    forwarded = headers.get("X-Forwarded-For", "")
+    candidates = [part.strip() for part in forwarded.split(",") if part.strip()]
+    candidates.extend([
+        headers.get("X-Real-IP", "").strip(),
+        client_address[0] if client_address else "",
+    ])
+    for candidate in candidates:
+        if is_public_ip(candidate):
+            return candidate
+    return ""
+
+
+def geolocate_ip(ip):
+    if IP_WEATHER_PROVIDER != "ipwhois" or not ip:
+        return None, "ip_weather_not_available"
+    url = f"https://ipwho.is/{quote(ip)}?fields=success,message,country,region,city,latitude,longitude,timezone"
+    with urlopen(url, timeout=8) as resp:
+        payload = json.loads(resp.read().decode("utf-8", "replace"))
+    if not payload.get("success"):
+        return None, payload.get("message") or "IP 定位失败"
+    latitude = payload.get("latitude")
+    longitude = payload.get("longitude")
+    if latitude is None or longitude is None:
+        return None, "IP 定位缺少经纬度"
+    city_name = " ".join(
+        part for part in [
+            payload.get("country"),
+            payload.get("region"),
+            payload.get("city"),
+        ] if part
+    )
+    return {
+        "latitude": latitude,
+        "longitude": longitude,
+        "cityName": city_name or "访问者所在地",
+        "timezone": (payload.get("timezone") or {}).get("id") if isinstance(payload.get("timezone"), dict) else "auto",
+    }, None
+
+
+def visitor_weather(headers, client_address):
+    ip = client_ip_from_headers(headers, client_address)
+    try:
+        location, err = geolocate_ip(ip)
+        if location:
+            weather, weather_err = open_meteo_weather(
+                location["latitude"],
+                location["longitude"],
+                location["cityName"],
+                location.get("timezone") or "auto",
+            )
+            if weather:
+                weather["ipMode"] = True
+                weather["ip"] = ip
+                return weather, None
+            err = weather_err
+        weather, weather_err = fallback_weather()
+        if weather:
+            weather["ipMode"] = False
+            weather["fallbackReason"] = err or weather_err
+            return weather, err or weather_err
+        return None, err or weather_err
+    except Exception as exc:
+        try:
+            weather, weather_err = fallback_weather()
+            if weather:
+                weather["ipMode"] = False
+                weather["fallbackReason"] = str(exc)
+                return weather, str(exc)
+            return None, weather_err or str(exc)
+        except Exception as fallback_exc:
+            return None, f"{exc}; fallback: {fallback_exc}"
 
 
 def weather_loop():
@@ -262,14 +374,10 @@ def weather_loop():
                 url = f"https://restapi.amap.com/v3/weather/weatherInfo?{params}"
                 parser = parse_amap_weather
             else:
-                params = urlencode({
-                    "latitude": WEATHER_LATITUDE,
-                    "longitude": WEATHER_LONGITUDE,
-                    "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m",
-                    "timezone": "Asia/Shanghai",
-                })
-                url = f"https://api.open-meteo.com/v1/forecast?{params}"
-                parser = parse_open_meteo_weather
+                weather, err = fallback_weather()
+                update_state(weather=weather, weatherError=err)
+                time.sleep(max(60, WEATHER_INTERVAL))
+                continue
 
             with urlopen(url, timeout=12) as resp:
                 weather, err = parser(resp.read().decode("utf-8", "replace"))
@@ -311,6 +419,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/latest":
             with state_lock:
                 body = json.dumps(latest, ensure_ascii=False).encode("utf-8")
+            self._send_headers(200, "application/json; charset=utf-8")
+            self.wfile.write(body)
+            return
+
+        if path == "/weather":
+            weather, err = visitor_weather(self.headers, self.client_address)
+            body = json.dumps({
+                "weather": weather,
+                "weatherError": err,
+            }, ensure_ascii=False).encode("utf-8")
             self._send_headers(200, "application/json; charset=utf-8")
             self.wfile.write(body)
             return
