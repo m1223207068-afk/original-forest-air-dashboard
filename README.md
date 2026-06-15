@@ -114,3 +114,26 @@ docker run --rm -p 8080:8080 --env-file .env original-forest-air-dashboard
 ```text
 http://127.0.0.1:8080
 ```
+
+## Cloudflare Workers 部署
+
+项目已准备 Cloudflare Worker 版本，目录在 `cloudflare-worker/`。这个版本使用 Worker + Durable Object 承载登录会话和沃斯彤实时 WebSocket。
+
+注意：Cloudflare Pages 不能原样运行当前 Python 后端；要部署到 Cloudflare，需要使用 `cloudflare-worker/` 里的 Worker 版本。
+
+部署步骤：
+
+```bash
+cd cloudflare-worker
+npm install
+npx wrangler login
+npx wrangler deploy
+```
+
+部署后，打开 Cloudflare 返回的 `workers.dev` 地址即可。网页登录沃斯彤账号密码，每个浏览器会话独立连接设备。
+
+Cloudflare 版本注意事项：
+
+- Durable Object 会保存当前浏览器会话的沃斯彤账号密码，用于维持实时连接
+- 出站 WebSocket 在 Cloudflare 上不支持 hibernation，会产生持续运行费用
+- 如果沃斯彤 WebSocket 的 `ws://register.woston.cn:8888` 被 Cloudflare 边缘网络限制，需要回退到容器部署方案，例如 CloudBase / Render

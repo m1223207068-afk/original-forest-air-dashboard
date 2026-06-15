@@ -1,0 +1,23 @@
+name = "original-forest-air-dashboard"
+main = "src/worker.js"
+compatibility_date = "2026-06-15"
+
+rules = [
+  { type = "Text", globs = ["../index.html"], fallthrough = true },
+  { type = "Data", globs = ["../assets/original_forest_logo.png"], fallthrough = true }
+]
+
+[[durable_objects.bindings]]
+name = "WST_SESSIONS"
+class_name = "WstSession"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["WstSession"]
+
+[vars]
+WEATHER_PROVIDER = "open_meteo"
+WEATHER_LATITUDE = "30.42"
+WEATHER_LONGITUDE = "120.30"
+WEATHER_CITY_NAME = "浙江 杭州临平"
+IP_WEATHER_PROVIDER = "ipwhois"
