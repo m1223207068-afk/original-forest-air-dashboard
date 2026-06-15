@@ -2,10 +2,15 @@ name = "original-forest-air-dashboard"
 main = "src/worker.js"
 compatibility_date = "2026-06-15"
 
-rules = [
-  { type = "Text", globs = ["../index.html"], fallthrough = true },
-  { type = "Data", globs = ["src/original_forest_logo.png"], fallthrough = true }
-]
+[[rules]]
+type = "Text"
+globs = ["../index.html"]
+fallthrough = true
+
+[[rules]]
+type = "Data"
+globs = ["**/*.png"]
+fallthrough = true
 
 [[durable_objects.bindings]]
 name = "WST_SESSIONS"
