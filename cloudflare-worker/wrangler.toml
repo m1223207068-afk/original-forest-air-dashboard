@@ -4,7 +4,7 @@ compatibility_date = "2026-06-15"
 
 rules = [
   { type = "Text", globs = ["../index.html"], fallthrough = true },
-  { type = "Data", globs = ["../assets/original_forest_logo.png"], fallthrough = true }
+  { type = "Data", globs = ["src/original_forest_logo.png"], fallthrough = true }
 ]
 
 [[durable_objects.bindings]]

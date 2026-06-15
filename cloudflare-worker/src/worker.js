@@ -1,5 +1,5 @@
 import html from "../../index.html";
-import logo from "../../assets/original_forest_logo.png";
+import logo from "./original_forest_logo.png";
 
 const WST_COOKIE = "wst_session";
 const WST_WS_BASE = "ws://register.woston.cn:8888/User/";
