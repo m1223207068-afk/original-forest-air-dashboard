@@ -22,7 +22,6 @@ new_sqlite_classes = ["WstSession"]
 
 [vars]
 WEATHER_PROVIDER = "open_meteo"
-WEATHER_LATITUDE = "30.42"
-WEATHER_LONGITUDE = "120.30"
-WEATHER_CITY_NAME = "浙江 杭州临平"
-IP_WEATHER_PROVIDER = "ipwhois"
+WEATHER_LATITUDE = "30.048"
+WEATHER_LONGITUDE = "119.960"
+WEATHER_CITY_NAME = "杭州富阳"

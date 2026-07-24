@@ -37,19 +37,16 @@ http://127.0.0.1:8787
 源码不保存门店账号密码。沃斯彤账号密码由用户打开网页后输入，后端只保存在当前运行进程的浏览器会话中。
 
 - `WEATHER_PROVIDER`: 天气源，默认 `open_meteo`，无需 Key；也可设为 `amap`
-- `WEATHER_LATITUDE`: Open-Meteo 纬度，默认 `30.42`
-- `WEATHER_LONGITUDE`: Open-Meteo 经度，默认 `120.30`
-- `WEATHER_CITY_NAME`: 看板显示的城市名，默认 `浙江 杭州临平`
 - `AMAP_KEY`: 高德开放平台 Web 服务 Key
-- `AMAP_CITY`: 高德城市 adcode，默认 `330113`，即杭州市临平区
 - `WEATHER_INTERVAL`: 天气刷新秒数，默认 `600`
-- `IP_WEATHER_PROVIDER`: 访问者 IP 天气定位，默认 `ipwhois`，无需 Key；定位失败时回退到 `WEATHER_LATITUDE` / `WEATHER_LONGITUDE`
+
+看板天气已强制固定为浙江杭州富阳（`30.048, 119.960`，高德 adcode `330183`），不再读取访问者公网 IP；所有门店和电视端会显示同一地点的实时天气。
 
 默认使用 Open-Meteo 免费天气接口，无需 `AMAP_KEY`。如果 `WEATHER_PROVIDER=amap` 但未设置 `AMAP_KEY`，看板会显示“天气接口待接入”，不会影响仪器实时数据展示。
 
 Open-Meteo 接口地址为 `https://api.open-meteo.com/v1/forecast`，无须注册和 Key。高德天气接口使用官方 Web 服务天气查询，地址为 `https://restapi.amap.com/v3/weather/weatherInfo`，需要高德开放平台的 Web 服务 Key。
 
-网页左侧天气会优先按访问者公网 IP 自动定位，并通过 Open-Meteo 查询当地实时天气。IP 定位使用 `https://ipwho.is` 的免费接口，无须 Key。若访问者 IP 无法定位，例如本地调试、内网、代理异常，系统会回退到默认坐标。
+网页左侧天气通过 Open-Meteo 查询富阳实时天气，避免内网、代理和电视端网络造成定位漂移。
 
 ## 免费部署
 
@@ -59,10 +56,6 @@ Open-Meteo 接口地址为 `https://api.open-meteo.com/v1/forecast`，无须注�
 
 ```text
 WEATHER_PROVIDER=open_meteo
-WEATHER_LATITUDE=30.42
-WEATHER_LONGITUDE=120.30
-WEATHER_CITY_NAME=浙江 杭州临平
-IP_WEATHER_PROVIDER=ipwhois
 ```
 
 启动命令:
@@ -89,17 +82,12 @@ CloudBase 云托管关键配置:
 
 ```text
 WEATHER_PROVIDER=open_meteo
-WEATHER_LATITUDE=30.42
-WEATHER_LONGITUDE=120.30
-WEATHER_CITY_NAME=浙江 杭州临平
-IP_WEATHER_PROVIDER=ipwhois
 ```
 
 如果使用高德天气，把 `WEATHER_PROVIDER` 改为 `amap`，并额外设置:
 
 ```text
 AMAP_KEY=你的高德Web服务Key
-AMAP_CITY=330113
 ```
 
 本地可先用 Docker 验证:

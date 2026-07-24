@@ -9,10 +9,8 @@ services:
       - key: WEATHER_PROVIDER
         value: open_meteo
       - key: WEATHER_LATITUDE
-        value: "30.42"
+        value: "30.048"
       - key: WEATHER_LONGITUDE
-        value: "120.30"
+        value: "119.960"
       - key: WEATHER_CITY_NAME
-        value: 浙江 杭州临平
-      - key: IP_WEATHER_PROVIDER
-        value: ipwhois
+        value: 杭州富阳

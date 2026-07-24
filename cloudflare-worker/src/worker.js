@@ -117,47 +117,22 @@ async function openMeteoWeather(latitude, longitude, cityName, timezone = "auto"
 }
 
 async function visitorWeather(request, env) {
-  const latitude = env.WEATHER_LATITUDE || "30.42";
-  const longitude = env.WEATHER_LONGITUDE || "120.30";
-  const fallbackCity = env.WEATHER_CITY_NAME || "浙江 杭州临平";
-  const provider = env.IP_WEATHER_PROVIDER || "ipwhois";
-  const ip = request.headers.get("cf-connecting-ip") || "";
+  const latitude = "30.048";
+  const longitude = "119.960";
+  const cityName = "杭州富阳";
 
   try {
-    if (provider === "ipwhois" && ip) {
-      const geo = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}?fields=success,message,country,region,city,latitude,longitude,timezone`, { cf: { cacheTtl: 300 } });
-      const location = await geo.json();
-      if (location.success && location.latitude !== undefined && location.longitude !== undefined) {
-        const cityName = [location.country, location.region, location.city].filter(Boolean).join(" ") || "访问者所在地";
-        const timezone = typeof location.timezone === "object" ? location.timezone.id : "auto";
-        const [weather, err] = await openMeteoWeather(String(location.latitude), String(location.longitude), cityName, timezone);
-        if (weather) {
-          weather.ipMode = true;
-          weather.ip = ip;
-          return [weather, null];
-        }
-        const [fallback] = await openMeteoWeather(latitude, longitude, fallbackCity, "Asia/Shanghai");
-        if (fallback) {
-          fallback.ipMode = false;
-          fallback.fallbackReason = err || "IP 天气失败";
-        }
-        return [fallback, err];
-      }
+    const [weather, err] = await openMeteoWeather(latitude, longitude, cityName, "Asia/Shanghai");
+    if (weather) {
+      weather.province = "浙江";
+      weather.city = cityName;
+      weather.adcode = "330183";
+      weather.ipMode = false;
+      weather.fixedLocation = true;
     }
-    const [weather, err] = await openMeteoWeather(latitude, longitude, fallbackCity, "Asia/Shanghai");
-    if (weather) weather.ipMode = false;
     return [weather, err];
   } catch (err) {
-    try {
-      const [weather] = await openMeteoWeather(latitude, longitude, fallbackCity, "Asia/Shanghai");
-      if (weather) {
-        weather.ipMode = false;
-        weather.fallbackReason = String(err?.message || err);
-      }
-      return [weather, String(err?.message || err)];
-    } catch (fallbackErr) {
-      return [null, `${err}; fallback: ${fallbackErr}`];
-    }
+    return [null, String(err?.message || err)];
   }
 }
 

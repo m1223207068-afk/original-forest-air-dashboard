@@ -1333,9 +1333,9 @@
 
     <section class="dashboard">
       <aside class="card weather-card">
-        <div class="section-title"><span>本地天气 · 实时接口</span><span id="weatherStatus">等待刷新</span></div>
+        <div class="section-title"><span>富阳天气 · 实时接口</span><span id="weatherStatus">等待刷新</span></div>
         <div class="weather-main">
-          <div id="weatherCity" class="weather-city">临平区</div>
+          <div id="weatherCity" class="weather-city">浙江 杭州富阳</div>
           <div class="weather-row">
             <div class="weather-icon" aria-hidden="true">
               <div id="weatherVisual" class="weather-visual" data-weather="cloud">
@@ -1654,7 +1654,7 @@
     function applyWeather(payload) {
       if (payload.weather) {
         const w = payload.weather;
-        el('weatherStatus').textContent = w.ipMode ? '随 IP 自动定位' : '实时刷新';
+        el('weatherStatus').textContent = w.fixedLocation ? '富阳固定定位' : '实时刷新';
         el('weatherCity').textContent = `${w.province || ''} ${w.city || ''}`.trim() || '本地天气';
         el('weatherVisual').dataset.weather = weatherVisualType(w.weather);
         el('weatherTemp').textContent = fmt(w.temperature, 0);

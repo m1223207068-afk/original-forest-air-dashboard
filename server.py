@@ -8,9 +8,8 @@ import time
 from datetime import datetime
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from ipaddress import ip_address
 from pathlib import Path
-from urllib.parse import quote, urlencode, urlparse
+from urllib.parse import urlencode, urlparse
 from urllib.request import urlopen
 
 import websocket
@@ -38,13 +37,12 @@ load_env_file(ROOT / ".env")
 HOST = os.getenv("DASHBOARD_HOST", "0.0.0.0" if os.getenv("PORT") else "127.0.0.1")
 PORT = int(os.getenv("DASHBOARD_PORT") or os.getenv("PORT") or "8787")
 AMAP_KEY = os.getenv("AMAP_KEY", "")
-AMAP_CITY = os.getenv("AMAP_CITY", "330113")
+AMAP_CITY = "330183"
 WEATHER_PROVIDER = os.getenv("WEATHER_PROVIDER", "open_meteo")
-WEATHER_LATITUDE = os.getenv("WEATHER_LATITUDE", "30.42")
-WEATHER_LONGITUDE = os.getenv("WEATHER_LONGITUDE", "120.30")
-WEATHER_CITY_NAME = os.getenv("WEATHER_CITY_NAME", "浙江 杭州临平")
+WEATHER_LATITUDE = "30.048"
+WEATHER_LONGITUDE = "119.960"
+WEATHER_CITY_NAME = "杭州富阳"
 WEATHER_INTERVAL = int(os.getenv("WEATHER_INTERVAL", "600"))
-IP_WEATHER_PROVIDER = os.getenv("IP_WEATHER_PROVIDER", "ipwhois")
 
 weather_lock = threading.Lock()
 weather_state = {
@@ -341,12 +339,24 @@ def open_meteo_weather(latitude, longitude, city_name, timezone="auto"):
 
 
 def fallback_weather():
-    return open_meteo_weather(
+    weather, err = open_meteo_weather(
         WEATHER_LATITUDE,
         WEATHER_LONGITUDE,
         WEATHER_CITY_NAME,
         "Asia/Shanghai",
     )
+    return apply_fixed_location(weather), err
+
+
+def apply_fixed_location(weather):
+    if not weather:
+        return weather
+    weather["province"] = "浙江"
+    weather["city"] = "杭州富阳"
+    weather["adcode"] = "330183"
+    weather["ipMode"] = False
+    weather["fixedLocation"] = True
+    return weather
 
 
 def update_weather_state(weather=None, weather_error=None):
@@ -359,93 +369,11 @@ def update_weather_state(weather=None, weather_error=None):
         session.publish(session.snapshot())
 
 
-def is_public_ip(value):
+def visitor_weather(_headers, _client_address):
     try:
-        parsed = ip_address(value)
-    except ValueError:
-        return False
-    return not (
-        parsed.is_private
-        or parsed.is_loopback
-        or parsed.is_link_local
-        or parsed.is_multicast
-        or parsed.is_reserved
-        or parsed.is_unspecified
-    )
-
-
-def client_ip_from_headers(headers, client_address):
-    forwarded = headers.get("X-Forwarded-For", "")
-    candidates = [part.strip() for part in forwarded.split(",") if part.strip()]
-    candidates.extend([
-        headers.get("X-Real-IP", "").strip(),
-        client_address[0] if client_address else "",
-    ])
-    for candidate in candidates:
-        if is_public_ip(candidate):
-            return candidate
-    return ""
-
-
-def geolocate_ip(ip):
-    if IP_WEATHER_PROVIDER != "ipwhois" or not ip:
-        return None, "ip_weather_not_available"
-    url = f"https://ipwho.is/{quote(ip)}?fields=success,message,country,region,city,latitude,longitude,timezone"
-    with urlopen(url, timeout=8) as resp:
-        payload = json.loads(resp.read().decode("utf-8", "replace"))
-    if not payload.get("success"):
-        return None, payload.get("message") or "IP 定位失败"
-    latitude = payload.get("latitude")
-    longitude = payload.get("longitude")
-    if latitude is None or longitude is None:
-        return None, "IP 定位缺少经纬度"
-    city_name = " ".join(
-        part for part in [
-            payload.get("country"),
-            payload.get("region"),
-            payload.get("city"),
-        ] if part
-    )
-    return {
-        "latitude": latitude,
-        "longitude": longitude,
-        "cityName": city_name or "访问者所在地",
-        "timezone": (payload.get("timezone") or {}).get("id") if isinstance(payload.get("timezone"), dict) else "auto",
-    }, None
-
-
-def visitor_weather(headers, client_address):
-    ip = client_ip_from_headers(headers, client_address)
-    try:
-        location, err = geolocate_ip(ip)
-        if location:
-            weather, weather_err = open_meteo_weather(
-                location["latitude"],
-                location["longitude"],
-                location["cityName"],
-                location.get("timezone") or "auto",
-            )
-            if weather:
-                weather["ipMode"] = True
-                weather["ip"] = ip
-                return weather, None
-            err = weather_err
-        weather, weather_err = fallback_weather()
-        if weather:
-            weather["ipMode"] = False
-            weather["fallbackReason"] = err or weather_err
-            return weather, err or weather_err
-        return None, err or weather_err
+        return fallback_weather()
     except Exception as exc:
-        try:
-            weather, weather_err = fallback_weather()
-            if weather:
-                weather["ipMode"] = False
-                weather["fallbackReason"] = str(exc)
-                return weather, str(exc)
-            return None, weather_err or str(exc)
-        except Exception as fallback_exc:
-            return None, f"{exc}; fallback: {fallback_exc}"
+        return None, str(exc)
 
 
 def weather_loop():
@@ -467,6 +395,7 @@ def weather_loop():
                 parser = parse_amap_weather
                 with urlopen(url, timeout=12) as resp:
                     weather, err = parser(resp.read().decode("utf-8", "replace"))
+                weather = apply_fixed_location(weather)
             else:
                 weather, err = fallback_weather()
             update_weather_state(weather=weather, weather_error=err)
